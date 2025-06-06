@@ -1,0 +1,17 @@
+.untracked/
+*.sh
+*.slurm
+*.uri
+*.pdbqt
+# PDBQT workflow directories (only need these two now!)
+data/ligands_raw/          
+data/ligands_pdbqt/        
+# Test directories (optional)
+data/ligands_raw_test/
+data/ligands_pdbqt_from_zinc/
+data/ligands_pdbqt_test/
+
+results/docking_outputs/
+results/timing_logs/
+**pycache**
+**mcdock**

@@ -1,0 +1,16 @@
+
+receptor = /home/noahsong/projects/trem2/hts/unidock/data/receptor/cluster1_receptor.pdbqt
+
+# Search space configuration (TREM2 binding site coordinates)
+center_x = 42.328
+center_y = 28.604
+center_z = 21.648
+
+size_x = 30.0
+size_y = 30.0
+size_z = 30.0
+
+# Docking parameters
+num_modes = 9
+search_mode = balance
+scoring = vinardo
