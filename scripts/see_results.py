@@ -3,8 +3,8 @@ import pandas as pd
 import glob
 
 # --- Configuration ---
-DOCKING_OUTPUT_DIR = "../results/docking_outputs/"
-ANALYSIS_RESULTS_FILE = "../results/docking_summary.csv"
+DOCKING_OUTPUT_DIR = "../results/outputs/"
+ANALYSIS_RESULTS_FILE = "../results/summary.csv"
 
 # --- Helper Function to Parse Uni-Dock Output Files ---
 def parse_unidock_pdbqt_vina(filepath):
