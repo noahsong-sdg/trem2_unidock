@@ -7,25 +7,30 @@ import requests
 import os
 import gzip
 import shutil
+import time
+import random
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 
 # Get the absolute path of the directory where this script is located
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+RAW_LIGANDS_DIR = os.path.join(ROOT_DIR, "../data/column_one/ligands_raw")
+URI_FILE = os.path.join(ROOT_DIR, "../data/column_one.uri")
 
 # Thread-safe progress tracking
 download_lock = threading.Lock()
-progress_counter = {'completed': 0, 'failed': 0}
+progress_counter = {'completed': 0, 'failed': 0, 'consecutive_failures': 0, 'total_processed': 0}
 
-def download_zinc_subset(url, output_dir, filename=None):
+def download_zinc_subset(url, output_dir, filename=None, retry_count=0):
     """
-    Downloads a subset of the ZINC database.
+    Downloads a subset of the ZINC database with retry logic and rate limiting.
 
     Args:
         url (str): URL to the ZINC subset (e.g., a direct download link to a PDBQT.gz file).
         output_dir (str): Directory to save the downloaded file.
         filename (str): Name of the file to save. If None, extracts from URL.
+        retry_count (int): Current retry attempt number.
     """
     if not os.path.exists(output_dir):
         os.makedirs(output_dir, exist_ok=True)
@@ -36,8 +41,16 @@ def download_zinc_subset(url, output_dir, filename=None):
 
     filepath = os.path.join(output_dir, filename)
 
+    # Add random delay to avoid overwhelming server
+    time.sleep(random.uniform(0.5, 2.0))
+
     try:
-        response = requests.get(url, stream=True, timeout=30)
+        # Simple request with basic headers
+        headers = {
+            'User-Agent': 'HTS-Pipeline/1.0 (Batch Download)'
+        }
+        
+        response = requests.get(url, stream=True, timeout=300, headers=headers)
         response.raise_for_status()  # Raise an exception for bad status codes
         
         # Get file size if available
@@ -46,28 +59,74 @@ def download_zinc_subset(url, output_dir, filename=None):
         
         with open(filepath, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-                downloaded_size += len(chunk)
+                if chunk:  # filter out keep-alive chunks
+                    f.write(chunk)
+                    downloaded_size += len(chunk)
         
         file_size = os.path.getsize(filepath)
         
         # Thread-safe progress update
         with download_lock:
             progress_counter['completed'] += 1
-            print(f"✓ Downloaded ({progress_counter['completed']}) {filename} ({file_size:,} bytes)")
+            progress_counter['consecutive_failures'] = 0  # Reset on success
+            progress_counter['total_processed'] += 1
+            completed = progress_counter['completed']
+            failed = progress_counter['failed']
+            total = progress_counter['total_processed']
+            print(f"✓ Downloaded ({completed}/{total}, {failed} failed) {filename} ({file_size:,} bytes)")
         
         return filepath
         
-    except requests.exceptions.RequestException as e:
-        with download_lock:
-            progress_counter['failed'] += 1
-            print(f"✗ Failed ({progress_counter['failed']}) {filename}: {e}")
-        return None
+    except (requests.exceptions.RequestException, requests.exceptions.Timeout) as e:
+        # Retry logic for network errors
+        if retry_count < 3:
+            backoff_time = (3 ** retry_count) + random.uniform(1, 3)
+            with download_lock:
+                print(f"⚠️  Retry {retry_count + 1}/3 for {filename} after {backoff_time:.1f}s: {e}")
+            time.sleep(backoff_time)
+            return download_zinc_subset(url, output_dir, filename, retry_count + 1)
+        else:
+            with download_lock:
+                progress_counter['failed'] += 1
+                progress_counter['consecutive_failures'] += 1
+                progress_counter['total_processed'] += 1
+                print(f"✗ Failed ({progress_counter['failed']}) {filename} after 3 retries: {e}")
+            return None
     except Exception as e:
         with download_lock:
             progress_counter['failed'] += 1
+            progress_counter['consecutive_failures'] += 1
+            progress_counter['total_processed'] += 1
             print(f"✗ Error ({progress_counter['failed']}) {filename}: {e}")
         return None
+
+def should_halt_download(max_failure_rate, early_check_count, consecutive_limit, debug_mode):
+    """
+    Check if download should be halted due to high failure rates.
+    
+    Returns:
+        tuple: (should_halt, reason)
+    """
+    with download_lock:
+        total = progress_counter['total_processed']
+        failed = progress_counter['failed']
+        consecutive = progress_counter['consecutive_failures']
+        
+        # Check consecutive failures
+        if consecutive >= consecutive_limit:
+            return True, f"🛑 HALTING: {consecutive} consecutive failures (limit: {consecutive_limit})"
+        
+        # Check failure rate after minimum sample size
+        if total >= early_check_count:
+            failure_rate = failed / total
+            if failure_rate > max_failure_rate:
+                return True, f"🛑 HALTING: {failure_rate:.1%} failure rate (limit: {max_failure_rate:.1%}) after {total} attempts"
+        
+        # Debug mode: halt on any sustained failures
+        if debug_mode and consecutive >= 5:
+            return True, f"🛑 DEBUG HALT: {consecutive} consecutive failures (debug mode)"
+        
+        return False, None
 
 def download_single_file(args):
     """Helper function for parallel downloads"""
@@ -100,6 +159,7 @@ def download_all_from_uri_file(uri_file_path, base_output_dir, max_workers=4):
         return 0, 0
     
     print(f"Starting parallel download of {len(urls)} files using {max_workers} workers...")
+    print(f"Note: Using conservative worker count and delays to be respectful to ZINC server")
     
     # Reset progress counters
     with download_lock:
@@ -132,9 +192,29 @@ def download_all_from_uri_file(uri_file_path, base_output_dir, max_workers=4):
                     downloaded_files_count += 1
                 else:
                     failed_downloads_count += 1
+                    
+                # Check if we should halt due to failures
+                should_halt, halt_reason = should_halt_download(0.20, 50, 10, True)  # Using defaults
+                if should_halt:
+                    print(f"\n{halt_reason}")
+                    print(f"📊 Progress: {progress_counter['completed']} success, {progress_counter['failed']} failed, {progress_counter['total_processed']} total")
+                    print(f"🚨 Terminating early to prevent wasting HPC resources!")
+                    
+                    # Cancel remaining futures
+                    for remaining_future in future_to_url:
+                        remaining_future.cancel()
+                    break
+                    
             except Exception as e:
                 failed_downloads_count += 1
                 print(f"✗ Exception downloading {url}: {e}")
+                
+                # Check halt condition on exceptions too
+                should_halt, halt_reason = should_halt_download(0.20, 50, 10, True)
+                if should_halt:
+                    print(f"\n{halt_reason}")
+                    print(f"🚨 Terminating early due to repeated failures!")
+                    break
     
     print(f"\n=== PARALLEL DOWNLOAD COMPLETE ===")
     print(f"✓ Successful downloads: {downloaded_files_count}")
@@ -371,16 +451,24 @@ def split_pdbqt_files(input_dir, output_dir, max_workers=4):
 if __name__ == "__main__":
     
     try:
-        RAW_LIGANDS_DIR = os.path.join(SCRIPT_DIR, "../data/450_3/ligands_raw")
-        URI_FILE = os.path.join(SCRIPT_DIR, "../data/450_3.uri") # Using the PDBQT.gz file URLs
+        #RAW_LIGANDS_DIR = os.path.join(ROOT_DIR, "../data/column_one/ligands_raw")
+        #URI_FILE = os.path.join(ROOT_DIR, "../data/column_one.uri") # Using the PDBQT.gz file URLs
         
-        # Configuration for parallel processing
-        DOWNLOAD_WORKERS = 8  # Number of parallel download threads
-        EXTRACTION_WORKERS = 4  # Number of parallel extraction threads
+        # Configuration for parallel processing - very conservative for ZINC server
+        DOWNLOAD_WORKERS = 3   # Number of parallel download threads (very conservative)
+        EXTRACTION_WORKERS = 16  # Number of parallel extraction threads (matches CPU allocation)
+        
+        # Failure handling configuration - prevent wasting hours on doomed runs
+        MAX_FAILURE_RATE = 0.20  # Stop if >20% of downloads fail
+        EARLY_FAILURE_CHECK = 50  # Check failure rate after first 50 downloads
+        HALT_ON_CONSECUTIVE_FAILURES = 10  # Stop if 10 consecutive downloads fail
+        DEBUG_MODE = True  # Set to False to continue despite failures
         
         print(f"=== PARALLEL DATA DOWNLOAD SCRIPT ===")
         print(f"Download workers: {DOWNLOAD_WORKERS}")
         print(f"Extraction workers: {EXTRACTION_WORKERS}")
+        print(f"Failure handling: Stop if >{MAX_FAILURE_RATE*100:.0f}% fail or {HALT_ON_CONSECUTIVE_FAILURES} consecutive failures")
+        print(f"Debug mode: {'ON' if DEBUG_MODE else 'OFF'} (will halt on early failures)")
         
         # Check if URI file exists
         if not os.path.exists(URI_FILE):
@@ -397,8 +485,26 @@ if __name__ == "__main__":
         print(f"✗ Failed downloads: {failed_downloads}")
         print(f"📁 Files saved to: {RAW_LIGANDS_DIR}")
         
+        # Check if we should abort due to too many failures
+        total_attempted = successful_downloads + failed_downloads
+        if total_attempted > 0:
+            failure_rate = failed_downloads / total_attempted
+            if failure_rate > MAX_FAILURE_RATE and total_attempted > EARLY_FAILURE_CHECK:
+                print(f"\n🚨 ABORTING: {failure_rate:.1%} failure rate exceeds {MAX_FAILURE_RATE:.1%} threshold")
+                print(f"   Consider debugging connection issues before proceeding")
+                exit(1)
+            elif failed_downloads > 0:
+                print(f"📊 Failure rate: {failure_rate:.1%} (within acceptable range)")
+        
+        # Only proceed if we have some successful downloads
+        if successful_downloads == 0:
+            print(f"\n🚨 ERROR: No files were successfully downloaded!")
+            print(f"   Check network connectivity to files.docking.org")
+            print(f"   Consider running with DEBUG_MODE = True for detailed error analysis")
+            exit(1)
+        
         # Extract PDBQT files with parallel processing
-        pdbqt_dir = os.path.join(SCRIPT_DIR, "../data/450_3/ligands_pdbqt")
+        pdbqt_dir = os.path.join(ROOT_DIR, "../data/column_one/ligands_pdbqt")
         successful_extractions, failed_extractions = extract_pdbqt_files(
             RAW_LIGANDS_DIR, pdbqt_dir, max_workers=EXTRACTION_WORKERS)
         print(f"\n=== EXTRACTION SUMMARY ===")
@@ -407,7 +513,7 @@ if __name__ == "__main__":
         print(f"📁 PDBQT files ready for splitting: {pdbqt_dir}")
         
         # Check if data has already been processed
-        split_dir = os.path.join(SCRIPT_DIR, "../data/450_3/ligands_pdbqt_split")
+        split_dir = os.path.join(ROOT_DIR, "../data/column_one/ligands_pdbqt_split")
         
         if os.path.exists(split_dir) and os.listdir(split_dir):
             # Count existing processed molecules

@@ -122,7 +122,7 @@ scoring = {scoring_function}
 # --- Run Uni-Dock ---
 def run_unidock(unidock_executable, receptor_file, ligand_input, output_dir, 
                 center_x, center_y, center_z, size_x, size_y, size_z, 
-                scoring_function="vinardo", num_modes=5, timer=None):
+                scoring_function="vinardo", num_modes=3, timer=None):
     """
     Runs Uni-Dock for a set of ligands against a receptor with pause/resume support.
 
@@ -217,7 +217,6 @@ def run_unidock(unidock_executable, receptor_file, ligand_input, output_dir,
             "--size_z", str(size_z),
             "--scoring", scoring_function,
             "--num_modes", str(num_modes),
-            "--max_gpu_memory", "3000",  # Use ~3GB (leaving 300MB headroom for stability)
             "--dir", os.path.abspath(output_dir)
         ]
         
@@ -419,7 +418,7 @@ if __name__ == "__main__":
         successful_dockings, failed_dockings = run_unidock(
             UNIDOCK_EXECUTABLE, RECEPTOR_FILE, LIGAND_DIR, DOCKING_OUTPUT_DIR, 
             CENTER_X, CENTER_Y, CENTER_Z, SIZE_X, SIZE_Y, SIZE_Z, 
-            scoring_function="vinardo", num_modes=5, timer=timer
+            scoring_function="vinardo", num_modes=3, timer=timer
         )
         
         # Set final ligand count for performance metrics
