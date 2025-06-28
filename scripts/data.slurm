@@ -21,8 +21,7 @@ module load cmake
 # Set working directory paths to match project structure
 SCRIPT_DIR="/scratch/alpine/noso3320/trem2/trem2_unidock/scripts"
 DATA_DIR="/scratch/alpine/noso3320/trem2/trem2_unidock/data"
-WORK_DIR="/scratch/alpine/noso3320/trem2/zinc_database"
-mkdir -p $WORK_DIR
+WORK_DIR="/scratch/alpine/noso3320/trem2/trem2_unidock"
 cd $WORK_DIR
 
 # Log start time
@@ -41,13 +40,21 @@ download_with_retry() {
     while [ $attempt -le $max_attempts ]; do
         echo "Attempt $attempt of $max_attempts for $filename"
         
-        if wget --continue --timeout=300 --tries=3 --progress=bar:force "$url"; then
-            echo "Successfully downloaded $filename"
+        # Try wget first
+        if wget --continue --timeout=600 --connect-timeout=60 --read-timeout=300 --tries=3 --retry-connrefused --waitretry=10 --progress=bar:force "$url"; then
+            echo "Successfully downloaded $filename with wget"
             return 0
         else
-            echo "Failed to download $filename (attempt $attempt)"
-            attempt=$((attempt + 1))
-            sleep 60  # Wait 1 minute before retry
+            echo "wget failed for $filename, trying curl..."
+            # Try curl as fallback
+            if curl -L -C - --connect-timeout 60 --max-time 600 --retry 3 --retry-delay 10 -o "$filename" "$url"; then
+                echo "Successfully downloaded $filename with curl"
+                return 0
+            else
+                echo "Both wget and curl failed for $filename (attempt $attempt)"
+                attempt=$((attempt + 1))
+                sleep 60  # Wait 1 minute before retry
+            fi
         fi
     done
     
@@ -70,6 +77,22 @@ URI_FILE="$DATA_DIR/column_one.uri"
 if [ ! -f "$URI_FILE" ]; then
     echo "ERROR: $URI_FILE not found! Please ensure the file is in the data directory."
     exit 1
+fi
+
+# Test connectivity to files.docking.org
+echo "Testing connectivity to files.docking.org..."
+if ping -c 3 files.docking.org > /dev/null 2>&1; then
+    echo "✓ Can ping files.docking.org"
+else
+    echo "⚠️  Cannot ping files.docking.org - may still work via HTTP"
+fi
+
+# Test basic HTTP connectivity
+echo "Testing HTTP connectivity..."
+if wget --spider --timeout=30 http://files.docking.org > /dev/null 2>&1; then
+    echo "✓ Can reach files.docking.org via HTTP"
+else
+    echo "⚠️  Cannot reach files.docking.org via HTTP - downloads may fail"
 fi
 
 # Count total URLs
