@@ -3,11 +3,10 @@
 #SBATCH --partition=amilan
 #SBATCH --account=ucb-general
 #SBATCH --qos=normal
-#SBATCH --time=48:00:00
+#SBATCH --time=24:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
-#SBATCH --mem=8G
 #SBATCH --output=zinc_download_%j.out
 #SBATCH --error=zinc_download_%j.err
 #SBATCH --mail-type=FAIL,END
