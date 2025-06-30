@@ -24,7 +24,7 @@ WORK_DIR="/scratch/alpine/noso3320/trem2/trem2_unidock"
 cd $WORK_DIR
 
 # Database index file (relative paths to ZINC files)
-DB_INDEX_FILE="$SCRIPT_DIR/c1_dbindex.database_index"
+DB_INDEX_FILE="$DATA_DIR/c1_dbindex.database_index"
 ZINC_BASE_URL="http://files.docking.org/2D"
 
 # Check if database index file exists
