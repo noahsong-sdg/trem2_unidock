@@ -3,13 +3,17 @@
 A set of Python scripts to perform a high-throughput virtual screening workflow using Uni-Dock, targeting TREM2. I've tried to make this workflow operable for possibly other datasets and/or receptors, but there are some pecularities. There should be markers in scripts that need to be modified otherwise
 
 Naming convention for the results:
-[Loop type]_[config type]\_[column numbers].dat
-Ie, `CL_1_3.dat`; the closed loop configuration, using the first docking box config, and the third column 
+`[Loop type]_[config type]\_[column numbers].dat`
+Ie, `CL_1_3.dat` refers to the closed loop configuration of trem2, the first docking box config, and the third column (in the ZINC database). 
 
 ## Workflow Steps
 
-### 0. Prepare the Receptor (Manual Step)
+### 0. Preparation
+#### Dependencies
+You need Uni-dock. 
 
+
+#### The Receptor Protein
 1.  Obtain the PDB structure of your target protein (e.g., TREM2).
 2.  Prepare the receptor for docking. This usually involves:
     *   Removing water molecules and other non-essential heteroatoms.

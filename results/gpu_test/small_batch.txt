@@ -1,0 +1,1 @@
+../data/450_3/ligands_pdbqt_split/IFAAML.xaa/ZINC000000673309.pdbqt

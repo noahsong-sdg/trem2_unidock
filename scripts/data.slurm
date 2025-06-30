@@ -23,58 +23,13 @@ DATA_DIR="/scratch/alpine/noso3320/trem2/trem2_unidock/data"
 WORK_DIR="/scratch/alpine/noso3320/trem2/trem2_unidock"
 cd $WORK_DIR
 
-# Log start time
-echo "Starting ZINC database download at $(date)"
-echo "Working directory: $WORK_DIR"
-echo "Script directory: $SCRIPT_DIR"
-echo "Data directory: $DATA_DIR"
+# Database index file (relative paths to ZINC files)
+DB_INDEX_FILE="$SCRIPT_DIR/c1_dbindex.database_index"
+ZINC_BASE_URL="http://files.docking.org/2D"
 
-# Function to download with retry logic
-download_with_retry() {
-    local url=$1
-    local filename=$(basename $url)
-    local max_attempts=3
-    local attempt=1
-    
-    while [ $attempt -le $max_attempts ]; do
-        echo "Attempt $attempt of $max_attempts for $filename"
-        
-        # Try wget first
-        if wget --continue --timeout=600 --connect-timeout=60 --read-timeout=300 --tries=3 --retry-connrefused --waitretry=10 --progress=bar:force "$url"; then
-            echo "Successfully downloaded $filename with wget"
-            return 0
-        else
-            echo "wget failed for $filename, trying curl..."
-            # Try curl as fallback
-            if curl -L -C - --connect-timeout 60 --max-time 600 --retry 3 --retry-delay 10 -o "$filename" "$url"; then
-                echo "Successfully downloaded $filename with curl"
-                return 0
-            else
-                echo "Both wget and curl failed for $filename (attempt $attempt)"
-                attempt=$((attempt + 1))
-                sleep 60  # Wait 1 minute before retry
-            fi
-        fi
-    done
-    
-    echo "ERROR: Failed to download $filename after $max_attempts attempts"
-    return 1
-}
-
-# Create log file
-LOG_FILE="$WORK_DIR/download_log_$(date +%Y%m%d_%H%M%S).txt"
-exec 1> >(tee -a "$LOG_FILE")
-exec 2> >(tee -a "$LOG_FILE" >&2)
-
-# Download specific ZINC subsets (modify URLs as needed)
-echo "Downloading ZINC database subsets..."
-
-# Read URLs from column_one.uri file
-URI_FILE="$DATA_DIR/column_one.uri"
-
-# Check if URI file exists
-if [ ! -f "$URI_FILE" ]; then
-    echo "ERROR: $URI_FILE not found! Please ensure the file is in the data directory."
+# Check if database index file exists
+if [ ! -f "$DB_INDEX_FILE" ]; then
+    echo "ERROR: $DB_INDEX_FILE not found! Please ensure the file is in the scripts directory."
     exit 1
 fi
 
@@ -94,80 +49,104 @@ else
     echo "⚠️  Cannot reach files.docking.org via HTTP - downloads may fail"
 fi
 
-# Count total URLs
-TOTAL_URLS=$(wc -l < "$URI_FILE")
-echo "Found $TOTAL_URLS URLs to download from $URI_FILE"
+# Function to download a file with retries
+download_with_retry() {
+    local file_path="$1"
+    local url="${ZINC_BASE_URL}/${file_path}"
+    local filename=$(basename "$file_path")
+    local max_attempts=3
+    local attempt=1
+    
+    echo "Downloading: $url"
+    
+    while [ $attempt -le $max_attempts ]; do
+        echo "  Attempt $attempt/$max_attempts for $filename"
+        
+        # Try wget first
+        if wget --continue --timeout=600 --connect-timeout=60 --read-timeout=300 --tries=3 --retry-connrefused --waitretry=10 --progress=bar:force "$url"; then
+            echo "Successfully downloaded $filename with wget"
+            return 0
+        else
+            echo "wget failed for $filename, trying curl..."
+            # Try curl as fallback
+            if curl -L -C - --connect-timeout 60 --max-time 600 --retry 3 --retry-delay 10 -o "$filename" "$url"; then
+                echo "Successfully downloaded $filename with curl"
+                return 0
+            else
+                echo "Both wget and curl failed for $filename (attempt $attempt)"
+                attempt=$((attempt + 1))
+                if [ $attempt -le $max_attempts ]; then
+                    echo "⚠️  Retry $attempt/$max_attempts for $filename after 2.6s: Download failed"
+                    sleep 60  # Wait 1 minute before retry
+                fi
+            fi
+        fi
+    done
+    
+    echo "Failed to download $filename after $max_attempts attempts"
+    return 1
+}
 
-# TESTING: Limit to first 3 URLs for quick test
+# Count total files in database index
+TOTAL_FILES=$(wc -l < "$DB_INDEX_FILE")
+echo "Found $TOTAL_FILES files to download from $DB_INDEX_FILE"
+
+# TESTING: Limit to first 3 files for quick test
 TEST_LIMIT=3
-echo "🧪 TESTING MODE: Processing only first $TEST_LIMIT URLs (out of $TOTAL_URLS total)"
+echo "🧪 TESTING MODE: Processing only first $TEST_LIMIT files (out of $TOTAL_FILES total)"
 
-# Download each file from URI list
+# Download each file from database index
 FAILED_DOWNLOADS=()
 CURRENT_COUNT=0
 
-while IFS= read -r url; do
+while IFS= read -r file_path; do
     # Skip empty lines
-    if [ -z "$url" ]; then
+    if [ -z "$file_path" ]; then
         continue
     fi
     
     CURRENT_COUNT=$((CURRENT_COUNT + 1))
-    echo "[$CURRENT_COUNT/$TEST_LIMIT] Processing: $url"
+    echo "[$CURRENT_COUNT/$TEST_LIMIT] Processing: $file_path"
     
-    if ! download_with_retry "$url"; then
-        FAILED_DOWNLOADS+=("$url")
+    if ! download_with_retry "$file_path"; then
+        FAILED_DOWNLOADS+=("$file_path")
     fi
     
-    # TESTING: Break after processing the test limit
+    # Break after test limit
     if [ $CURRENT_COUNT -ge $TEST_LIMIT ]; then
-        echo "🧪 TESTING: Reached limit of $TEST_LIMIT files, stopping early"
+        echo "🧪 TESTING: Stopping after $TEST_LIMIT files"
         break
     fi
     
-    # Progress update every 100 files
-    if [ $((CURRENT_COUNT % 100)) -eq 0 ]; then
-        echo "Progress: $CURRENT_COUNT/$TOTAL_URLS files processed"
-        echo "Failed so far: ${#FAILED_DOWNLOADS[@]}"
-        echo "Current time: $(date)"
+done < "$DB_INDEX_FILE"
+
+# Copy downloaded files to data directory
+echo "Copying downloaded files to data directory..."
+mkdir -p "$DATA_DIR"
+for file in *.pdbqt.gz; do
+    if [ -f "$file" ]; then
+        cp "$file" "$DATA_DIR/"
+        echo "Copied: $file"
     fi
-    
-done < "$URI_FILE"
+done
 
-# Don't extract .pdbqt.gz files - keep them compressed
-echo "Download completed - PDBQT files kept in compressed format"
-
-# Generate summary
-echo "========================================="
-echo "Download Summary:"
-echo "========================================="
-echo "Completed at: $(date)"
-echo "Total files processed: $TOTAL_URLS"
-echo "Successfully downloaded: $((TOTAL_URLS - ${#FAILED_DOWNLOADS[@]}))"
+# Final report
+echo ""
+echo "========== DOWNLOAD SUMMARY =========="
+echo "Total files requested: $CURRENT_COUNT"
+echo "Successfully downloaded: $((CURRENT_COUNT - ${#FAILED_DOWNLOADS[@]}))"
 echo "Failed downloads: ${#FAILED_DOWNLOADS[@]}"
 
 if [ ${#FAILED_DOWNLOADS[@]} -gt 0 ]; then
-    echo "Failed URLs:"
-    for failed_url in "${FAILED_DOWNLOADS[@]}"; do
-        echo "  - $failed_url"
+    echo ""
+    echo "Failed files:"
+    for failed in "${FAILED_DOWNLOADS[@]}"; do
+        echo "  - $failed"
     done
 fi
 
-# Show disk usage
-echo "Disk usage:"
-du -sh $WORK_DIR
-
-# Check available space
-echo "Available space in scratch:"
-df -h /scratch/summit/$USER
-
-echo "ZINC database download job completed!"
-
-# Optional: Copy to data directory for use by other scripts
-echo "Copying downloaded files to data directory..."
-LIGANDS_RAW_DIR="$DATA_DIR/column_one/ligands_raw"
-mkdir -p $LIGANDS_RAW_DIR
-rsync -av --progress $WORK_DIR/*.pdbqt.gz $LIGANDS_RAW_DIR/
-echo "Copy to data directory completed!"
+echo ""
+echo "Download job completed at: $(date)"
+echo "Files are available in: $DATA_DIR"
 
 exit 0

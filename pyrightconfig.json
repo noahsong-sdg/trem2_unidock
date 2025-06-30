@@ -1,0 +1,7 @@
+{
+    "exclude": [
+        "**/data/**"
+    ],
+    "reportMissingImports": true,
+    "reportMissingTypeStubs": false
+}

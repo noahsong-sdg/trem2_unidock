@@ -1,0 +1,24 @@
+
+receptor = /home/noahsong/work/trem2/hts/trem2_unidock/data/receptor/cluster1_receptor.pdbqt
+
+# For docking a single ligand file, use 'ligand =' path/to/ligand.pdbqt
+# For batch docking of all ligands in a directory, UniDock typically handles this via command line args
+# or by specifying a directory. We will use command line for batch.
+
+# Search space configuration (replace with actual TREM2 binding site coordinates)
+center_x = 42.328
+center_y = 28.604
+center_z = 21.648
+
+size_x = 30.0
+size_y = 30.0
+size_z = 30.0
+
+# Docking parameters
+num_modes = 3
+search_mode = balance
+scoring = vinardo
+
+# Output format (optional, UniDock defaults usually work)
+# out_flex = # Path for flexible part of receptor (if any)
+# log = docking.log # Log file name (UniDock usually names this based on output)

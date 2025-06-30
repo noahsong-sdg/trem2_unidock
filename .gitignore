@@ -1,9 +1,9 @@
 .untracked/
 *.sh
-*.slurm
 *.uri
 *.pdbqt
 # PDBQT workflow directories (only need these two now!)
+data/
 data/ligands_raw/          
 data/ligands_pdbqt/        
 # Test directories (optional)
