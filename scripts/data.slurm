@@ -25,7 +25,16 @@ cd $WORK_DIR
 
 # Database index file (relative paths to ZINC files)
 DB_INDEX_FILE="$WORK_DIR/c1_dbindex.database_index"
-ZINC_BASE_URL="http://files.docking.org/2D"
+
+# Try different possible base URLs for ZINC
+ZINC_BASE_URLS=(
+    "http://files.docking.org/2D"
+    "http://files.docking.org"
+    "https://files.docking.org/2D"
+    "https://files.docking.org"
+    "http://zinc15.docking.org/2D"
+    "https://zinc15.docking.org/2D"
+)
 
 # Check if database index file exists
 if [ ! -f "$DB_INDEX_FILE" ]; then
@@ -52,38 +61,58 @@ fi
 # Function to download a file with retries
 download_with_retry() {
     local file_path="$1"
-    local url="${ZINC_BASE_URL}/${file_path}"
     local filename=$(basename "$file_path")
-    local max_attempts=3
-    local attempt=1
     
-    echo "Downloading: $url"
+    echo "Trying to download: $filename"
+    echo "File path in index: $file_path"
     
-    while [ $attempt -le $max_attempts ]; do
-        echo "  Attempt $attempt/$max_attempts for $filename"
+    # Try each base URL until one works
+    for base_url in "${ZINC_BASE_URLS[@]}"; do
+        local url="${base_url}/${file_path}"
+        echo "  Testing base URL: $base_url"
+        echo "  Full URL: $url"
         
-        # Try wget first
-        if wget --continue --timeout=600 --connect-timeout=60 --read-timeout=300 --tries=3 --retry-connrefused --waitretry=10 --progress=bar:force "$url"; then
-            echo "Successfully downloaded $filename with wget"
-            return 0
-        else
-            echo "wget failed for $filename, trying curl..."
-            # Try curl as fallback
-            if curl -L -C - --connect-timeout 60 --max-time 600 --retry 3 --retry-delay 10 -o "$filename" "$url"; then
-                echo "Successfully downloaded $filename with curl"
-                return 0
-            else
-                echo "Both wget and curl failed for $filename (attempt $attempt)"
+        # First, test if the URL exists with HEAD request
+        echo "  Testing URL accessibility..."
+        local head_response=$(curl -I --connect-timeout 30 --max-time 60 "$url" 2>&1 | head -1)
+        echo "  HEAD response: $head_response"
+        
+        if echo "$head_response" | grep -q "200 OK"; then
+            echo "  ✓ URL accessible, proceeding with download..."
+            
+            # Try downloading with this base URL
+            local max_attempts=2
+            local attempt=1
+            
+            while [ $attempt -le $max_attempts ]; do
+                echo "    Attempt $attempt/$max_attempts for $filename"
+                
+                # Try wget first
+                if wget --continue --timeout=300 --connect-timeout=30 --read-timeout=180 --tries=1 --progress=bar:force "$url" 2>/dev/null; then
+                    echo "    ✓ Successfully downloaded $filename with wget from $base_url"
+                    return 0
+                fi
+                
+                # Try curl as fallback
+                if curl -L -C - --connect-timeout 30 --max-time 300 --retry 1 -o "$filename" "$url" 2>/dev/null; then
+                    echo "    ✓ Successfully downloaded $filename with curl from $base_url"
+                    return 0
+                fi
+                
                 attempt=$((attempt + 1))
                 if [ $attempt -le $max_attempts ]; then
-                    echo "⚠️  Retry $attempt/$max_attempts for $filename after 2.6s: Download failed"
-                    sleep 60  # Wait 1 minute before retry
+                    echo "    Retrying in 30s..."
+                    sleep 30
                 fi
-            fi
+            done
+            
+            echo "  ✗ Download failed with working URL: $url"
+        else
+            echo "  ✗ URL not accessible: $url"
         fi
-    done
+         done
     
-    echo "Failed to download $filename after $max_attempts attempts"
+    echo "✗ Failed to download $filename - no working base URL found"
     return 1
 }
 
